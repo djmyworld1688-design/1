@@ -1,5 +1,5 @@
-streamlit
-crewai
-crewai-tools
-duckduckgo-search
-plotly
+streamlit>=1.28.0
+crewai==0.80.0
+duckduckgo-search>=6.0.0
+plotly>=5.18.0
+tiktoken>=0.7.0
