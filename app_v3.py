@@ -16,11 +16,18 @@ from crewai.tools import tool
 from duckduckgo_search import DDGS
 
 # ═══════════════════════════════════════════════
-# 路径配置
+# 路径配置（兼容本地和云端）
 # ═══════════════════════════════════════════════
-DESKTOP_PATH = Path.home() / "Desktop"
-ARCHIVE_DIR = DESKTOP_PATH / "Health_Archive"
-ARCHIVE_DIR.mkdir(exist_ok=True)
+IS_CLOUD = not Path.home().joinpath("Desktop").exists()
+
+if IS_CLOUD:
+    # 云端：用临时目录
+    ARCHIVE_DIR = Path("/tmp/Health_Archive")
+else:
+    # 本地：用桌面
+    ARCHIVE_DIR = Path.home() / "Desktop" / "Health_Archive"
+
+ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 # ═══════════════════════════════════════════════
 # 页面配置
@@ -97,8 +104,11 @@ def get_last_report_date():
 def save_report(content):
     filename = datetime.now().strftime("%Y-%m-%d_%H-%M") + ".md"
     filepath = ARCHIVE_DIR / filename
-    filepath.write_text(content, encoding="utf-8")
-    return filepath
+    try:
+        filepath.write_text(content, encoding="utf-8")
+        return filepath
+    except Exception:
+        return None
 
 # ═══════════════════════════════════════════════
 # 可视化函数
@@ -129,13 +139,13 @@ def parse_exercise_plan(text):
         days = {"周一": 30, "周二": 0, "周三": 45, "周四": 20, "周五": 40, "周六": 60, "周日": 0}
     return days
 
-def draw_radar(scores, title="健康综合评分", color="#007AFF", fill="rgba(0,122,255,0.2)"):
+def draw_radar(scores, title="健康综合评分"):
     cats = list(scores.keys())
     vals = list(scores.values()) + [list(scores.values())[0]]
     cats_c = cats + [cats[0]]
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(r=vals, theta=cats_c, fill='toself',
-        fillcolor=fill, line=dict(color=color, width=2)))
+        fillcolor='rgba(0,122,255,0.2)', line=dict(color='#007AFF', width=2)))
     fig.update_layout(
         polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
         showlegend=False,
@@ -271,7 +281,7 @@ with st.sidebar:
     api_key = st.text_input(
         "Anthropic API Key", type="password",
         value=os.environ.get("ANTHROPIC_API_KEY", ""),
-        help="直接在此输入 Key，无需环境变量"
+        help="直接在此输入 Key"
     )
     start_btn = st.button("🚀 开始生成方案")
 
@@ -287,7 +297,6 @@ if start_btn:
         st.error("体重或身高格式有误，请包含数字，例如：75kg、175cm。")
         st.stop()
 
-    # ✅ 关键修复：在 Agent 初始化之前就设置 Key
     os.environ["ANTHROPIC_API_KEY"] = api_key
 
     last_report = get_last_report()
@@ -408,7 +417,6 @@ if start_btn:
             st.info("请检查网络连接和 API Key 是否有效，然后重新尝试。")
             run_success = False
         finally:
-            # 用完清除 Key
             os.environ.pop("ANTHROPIC_API_KEY", None)
 
     if run_success:
@@ -426,7 +434,6 @@ if start_btn:
             st.markdown(summary_content)
             st.divider()
 
-        # 可视化图表
         st.subheader("📊 数据可视化")
         scores = parse_scores(summary_content)
         macros = parse_nutrition(nutrition_content)
@@ -440,13 +447,11 @@ if start_btn:
         with col3:
             st.plotly_chart(draw_exercise_bar(exercise_days), use_container_width=True)
 
-        # 历史对比
         if last_report:
             last_scores = parse_scores(last_report)
             st.divider()
             st.subheader(f"📈 与上次记录对比（{last_date}）")
             st.markdown('<div class="compare-box">📂 检测到历史记录，以下展示健康变化趋势。</div>', unsafe_allow_html=True)
-
             col_l, col_r = st.columns(2)
             with col_l:
                 fig_compare = go.Figure()
@@ -472,7 +477,6 @@ if start_btn:
                     paper_bgcolor='rgba(0,0,0,0)'
                 )
                 st.plotly_chart(fig_compare, use_container_width=True)
-
             with col_r:
                 st.markdown("**评分变化**")
                 for dim in scores:
@@ -488,7 +492,6 @@ if start_btn:
                     )
 
         st.divider()
-
         tab1, tab2, tab3, tab4 = st.tabs(["👨‍⚕️ 医生分析", "🥗 饮食计划", "💪 运动方案", "😴 睡眠建议"])
         with tab1: render_content(doctor_content, "医生分析生成失败")
         with tab2: render_content(nutrition_content, "饮食计划生成失败")
@@ -507,8 +510,9 @@ if start_btn:
             "*本报告由 AI 生成，仅供参考，不构成医疗建议。*\n"
         )
 
-        saved_path = save_report(full_report)
-        st.success(f"📂 报告已自动存档：{saved_path.name}")
+        saved = save_report(full_report)
+        if saved:
+            st.success(f"📂 报告已存档：{saved.name}")
 
         st.download_button(
             label="📥 下载我的健康方案",
@@ -518,6 +522,7 @@ if start_btn:
         )
 
         archive_files = sorted(ARCHIVE_DIR.glob("*.md"), reverse=True)
-        with st.expander(f"📁 Health_Archive 存档（共 {len(archive_files)} 份）"):
-            for f in archive_files:
-                st.text(f"• {f.name}")
+        if archive_files:
+            with st.expander(f"📁 本次会话存档（共 {len(archive_files)} 份）"):
+                for f in archive_files:
+                    st.text(f"• {f.name}")
